@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GoMoKu Game</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 0;
+        }
+
+        canvas {
+            background-color: #f0d9b5;
+            display: block;
+            margin: 20px auto;
+        }
+
+        #info {
+            margin: 20px;
+            font-size: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>GoMoKu 24S151042</h1>
+    
+    <!-- Registration Form -->
+    <div id = "registrationForm">
+        <h2>Registration</h2>
+        <input type="text" id="regName" placeholder="Enter your name" />
+        <input type="password" id="regPassword" placeholder="Enter your password" />
+        <button onclick="register()">Register</button>
+    </div>
+
+    <!-- Login Form -->
+    <div  id="loginForm" >
+        <h2>Login</h2>
+        <input type="text" id="loginName" placeholder="Enter your name" />
+        <input type="password" id="loginPassword" placeholder="Enter your password" />
+        <button onclick="login()">Login</button>
+    </div>
+
+    <!-- Match Request -->
+    <div id = "matchForm">
+        <h2>Match</h2>
+        <button onclick="requestMatch()">Request Match</button>
+    </div>
+
+    <!-- Player ID Display -->
+    <div id = "playerForm">
+        <h2>Your Player ID:</h2>
+        <p id="playerIdDisplay">Not logged in yet</p>
+    </div>
+
+    <!-- Game Info Display -->
+    <div id="info">Status: Not in a game</div>
+    <div id="info1"></div>
+    <div id="info2"></div>
+
+    <!-- Chessboard for the game -->
+    <canvas id="canvas"></canvas>
+
+    <script>
+        // const ws = new WebSocket('ws://localhost:7980');
+        const ws = new WebSocket('ws://10.tcp.vip.cpolar.cn:10261');
+        let playerId = null;
+        let gameId = null;
+        let currentTurn = null; // 当前轮到谁下棋
+        let canvas = document.getElementById('canvas');
+        let ctx = canvas.getContext('2d');
+
+        // 棋盘参数
+        let boardSize = 15;
+        let gridSize = 40;
+        let margin = 50;
+        let chessboard = Array(boardSize).fill(null).map(() => Array(boardSize).fill(0)); // 0为空，1为黑子，2为白子
+        
+        hide();
+
+        // 初始化棋盘
+        function drawBoard() {
+            canvas.width = margin * 2 + gridSize * (boardSize - 1);
+            canvas.height = margin * 2 + gridSize * (boardSize - 1);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.beginPath();
+            
+            for (let i = 0; i < boardSize; i++) {
+                // 竖线
+                ctx.moveTo(margin + i * gridSize, margin);
+                ctx.lineTo(margin + i * gridSize, margin + (boardSize - 1) * gridSize);
+                // 横线
+                ctx.moveTo(margin, margin + i * gridSize);
+                ctx.lineTo(margin + (boardSize - 1) * gridSize, margin + i * gridSize);
+            }
+            ctx.strokeStyle = "#000";
+            ctx.stroke();
+        }
+
+        // 绘制棋子
+        function drawStone(x, y, player) {
+            const posX = margin + x * gridSize;
+            const posY = margin + y * gridSize;
+
+            ctx.beginPath();
+            ctx.arc(posX, posY, gridSize / 2.5, 0, 2 * Math.PI);
+            if (player === 1) {
+                ctx.fillStyle = 'black';
+            } else {
+                ctx.fillStyle = 'white';
+                ctx.strokeStyle = 'black';
+                ctx.stroke();
+            }
+            ctx.fill();
+        }
+
+        // 点击落子
+        canvas.addEventListener('click', (e) => {
+            let rect = canvas.getBoundingClientRect();
+            let x = Math.round((e.clientX - rect.left - margin) / gridSize);
+            let y = Math.round((e.clientY - rect.top - margin) / gridSize);
+
+            if (x >= 0 && x < boardSize && y >= 0 && y < boardSize && chessboard[x][y] === 0 && currentTurn === playerId) {
+                // chessboard[x][y] = currentPlayer();
+                // drawStone(x, y, currentPlayer());
+                sendMove(x, y);
+            } else {
+                alert('Invalid move or not your turn');
+            }
+        });
+
+        function currentPlayer() {
+            return (currentTurn === playerId) ? 1 : 2;
+        }
+
+        // WebSocket communication
+        ws.onmessage = (event) => {
+            const msg = event.data;
+            console.log("Received message:", msg); // Debugging
+
+            if (msg.startsWith('REGISTER_SUCCESS,')) {
+                playerId = msg.split(',')[1];
+                // document.getElementById('playerIdDisplay').textContent = playerId;
+            } else if (msg.startsWith('LOGIN_SUCCESS,')) {
+                playerId = msg.split(',')[1];
+                document.getElementById('playerIdDisplay').textContent = playerId;
+                alert('Login successful!');
+                show();
+            } else if (msg.startsWith('GAME_START,')) {
+                const parts = msg.split(',');
+                gameId = parts[1];
+                const p1 = parts[2];
+                const p2 = parts[3];
+                currentTurn = parts[2]; // 谁先手
+                updateInfo();
+                alert(`Game started! Game ID: ${gameId}\nPlayer1 ID: ${p1}\nPlayer2 ID: ${p2}`);
+                drawBoard();
+                document.getElementById('info').textContent = "Game started! Game ID: " + gameId + "\nPlayer1 ID:" + p1 + "\nPlayer2 ID:" + p2;
+            } else if (msg.startsWith('MOVE_UPDATE,')) {
+                const parts = msg.split(',');
+                const movePlayerId = parts[1];
+                const piece = Number(parts[2]);
+                const movePosition = parts[3];
+                const [x, y] = movePosition.split('-').map(Number);
+                chessboard[x][y] = piece;
+                drawStone(x, y, piece);
+                // 更新轮次
+                currentTurn = (movePlayerId === playerId) ? getOpponentId() : playerId;
+                updateInfo();
+            } else if (msg.startsWith('GAME_WIN')) {
+                document.getElementById("info1").style.display = "";
+                document.getElementById('info2').textContent = "you win!";
+                endGame();
+            } else if (msg.startsWith('GAME_LOST')) {
+                document.getElementById("info1").style.display = "";
+                document.getElementById('info2').textContent = "you lost!";
+                endGame();
+            }
+        };
+
+        function updateBoard(movePlayerId, movePosition) {
+            const [x, y] = movePosition.split('-').map(Number);
+            if (chessboard[x][y] === 0) {  // 确保不会覆盖已有棋子
+                chessboard[x][y] = (movePlayerId === playerId) ? 1 : 2;  // 当前客户端为黑子，其他客户端为白子
+                drawStone(x, y, chessboard[x][y]);  // 根据玩家ID绘制黑子或白子
+            }
+
+            // 切换回合，更新 currentTurn
+            currentTurn = (movePlayerId === playerId) ? getOpponentId() : playerId;
+            updateInfo();
+        }
+
+        function sendMove(x, y) {
+            if (gameId && currentTurn === playerId) {
+                console.log(`Sending move: ${x}-${y}`); // Debugging
+                ws.send(`MOVE,${gameId},${x}-${y}`);
+            }
+        }
+
+        function getOpponentId() {
+            if (!gameId) return null;
+            const [id1, id2] = gameId.split('-');
+            return (id1 === playerId) ? id2 : id1;
+        }
+
+        function register() {
+            const name = document.getElementById('regName').value.trim();
+            const password = document.getElementById('regPassword').value.trim();
+            if (name && password) {
+                ws.send(`REGISTER,${name},${password}`);
+            } else {
+                alert("Please enter both name and password.");
+            }
+        }
+
+        function login() {
+            const name = document.getElementById('loginName').value.trim();
+            const password = document.getElementById('loginPassword').value.trim();
+            if (name && password) {
+                ws.send(`LOGIN,${name},${password}`);
+            } else {
+                alert("Please enter both name and password.");
+            }
+        }
+
+        function requestMatch() {
+            if (playerId) {
+                ws.send('MATCH_REQUEST');
+                document.getElementById('info').textContent = "Searching for a match...";
+            } else {
+                alert("Please login first.");
+            }
+        }
+
+        function endGame() {
+            document.getElementById('info').textContent = "Status: Game ended";
+            gameId = null;
+            currentTurn = null;
+        }
+        
+        function updateInfo() {
+            if (currentTurn === playerId) {
+                document.getElementById('info1').textContent = "Status: Your turn";
+            } else {
+                document.getElementById('info1').textContent = `Status: Opponent's turn`;
+            }
+        }
+
+        function hide() {
+            document.getElementById("registrationForm").style.display = "";
+            document.getElementById("loginForm").style.display = "";
+            document.getElementById("matchForm").style.display = "none";
+            document.getElementById("playerForm").style.display = "none";
+            document.getElementById("canvas").style.display = "none";
+            document.getElementById("info").style.display = "none";
+        }
+
+        function show() {
+            document.getElementById("registrationForm").style.display = "none";
+            document.getElementById("loginForm").style.display = "none";
+            document.getElementById("matchForm").style.display = "";
+            document.getElementById("playerForm").style.display = "";
+            document.getElementById("canvas").style.display = "";
+            document.getElementById("info").style.display = "";
+        }
+    </script>
+</body>
+</html>
